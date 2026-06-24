@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
 from core.storage.sqlite_store import get_path_lock
 
 
-GOALS_PATH = Path("/etc/neron/data/goals_state.json")
+GOALS_PATH = Path(
+    os.getenv("NERON_GOALS_PATH", "/etc/neron/data/goals_state.json")
+)
 
 
 def load_goals_state() -> dict[str, Any]:
