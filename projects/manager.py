@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 import unicodedata
 import uuid
@@ -14,7 +15,9 @@ from modules.events.event_types import PROJECT_CREATED
 from core.storage.sqlite_store import SQLiteStore, get_path_lock
 
 
-PROJECTS_PATH = Path("/etc/neron/data/projects.json")
+PROJECTS_PATH = Path(
+    os.getenv("NERON_PROJECTS_PATH", "/etc/neron/data/projects.json")
+)
 
 
 def _now() -> float:

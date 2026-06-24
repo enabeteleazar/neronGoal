@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,7 +13,9 @@ from modules.events.event_types import TASK_CREATED
 from core.storage.sqlite_store import SQLiteStore, get_path_lock
 
 
-TASKS_FILE = Path("/etc/neron/data/tasks.json")
+TASKS_FILE = Path(
+    os.getenv("NERON_TASKS_PATH", "/etc/neron/data/tasks.json")
+)
 
 
 def normalize_task_title(title: str | None) -> str:

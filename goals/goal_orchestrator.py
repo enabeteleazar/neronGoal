@@ -830,7 +830,13 @@ class GoalOrchestrator:
         test_results = project.get("test_results") or []
         tests_ok = bool(test_results) and all(item.get("returncode") == 0 for item in test_results)
         agent_path = next(
-            (path for path in created_files if str(path).endswith(f"{agent_name}.py") and "core/agents/generated/" in str(path)),
+            (
+                path
+                for path in created_files
+                if str(path).endswith(f"{agent_name}.py")
+                and "workspace/agents/" not in str(path)
+                and "workspace/agent_tests/" not in str(path)
+            ),
             None,
         )
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -10,7 +11,9 @@ from modules.events.event_types import PLAN_CREATED
 from core.storage.sqlite_store import SQLiteStore, get_path_lock
 
 
-DEFAULT_PLAN_HISTORY_PATH = Path("/etc/neron/data/plans.jsonl")
+DEFAULT_PLAN_HISTORY_PATH = Path(
+    os.getenv("NERON_PLANS_PATH", "/etc/neron/data/plans.jsonl")
+)
 
 
 class PlanStorage:
