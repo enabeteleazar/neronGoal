@@ -1150,7 +1150,9 @@ class GoalOrchestrator:
 
     def _project_relative_path(self, path: str) -> str:
         try:
-            return str(Path(path).resolve().relative_to(Path("/etc/neron").resolve()))
+            from common.paths import NERON_ROOT
+
+            return str(Path(path).resolve().relative_to(NERON_ROOT.resolve()))
         except ValueError:
             return path
 

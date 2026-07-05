@@ -5,12 +5,11 @@ import os
 from pathlib import Path
 from typing import Any
 
+from common.paths import NERON_DATA_DIR
 from core.storage.sqlite_store import get_path_lock
 
 
-GOALS_PATH = Path(
-    os.getenv("NERON_GOALS_PATH", "/etc/neron/data/goals_state.json")
-)
+GOALS_PATH = Path(os.getenv("NERON_GOALS_PATH", str(NERON_DATA_DIR / "goals_state.json")))
 
 
 def load_goals_state() -> dict[str, Any]:

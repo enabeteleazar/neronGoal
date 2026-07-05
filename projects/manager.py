@@ -9,15 +9,14 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from common.paths import NERON_DATA_DIR
 from modules.events.event import Event
 from modules.events.event_bus import event_bus
 from modules.events.event_types import PROJECT_CREATED
 from core.storage.sqlite_store import SQLiteStore, get_path_lock
 
 
-PROJECTS_PATH = Path(
-    os.getenv("NERON_PROJECTS_PATH", "/etc/neron/data/projects.json")
-)
+PROJECTS_PATH = Path(os.getenv("NERON_PROJECTS_PATH", str(NERON_DATA_DIR / "projects.json")))
 
 
 def _now() -> float:
