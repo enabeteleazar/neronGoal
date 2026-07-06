@@ -6,6 +6,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from common.paths import NERON_WORKSPACE_DIR
 from core.api.auth import verify_api_key
 from agents.factory.agent_creator import AgentCreator
 from agents.factory.build_orchestrator import AgentBuildOrchestrator
@@ -282,7 +283,7 @@ async def agent_registry_diagnostics() -> dict:
     manager = get_project_manager()
     return get_agent_runtime().registry.diagnose_consistency(
         projects=manager.list_projects(limit=500),
-        workspace_agents=Path("/etc/neron/workspace/agents"),
+        workspace_agents=NERON_WORKSPACE_DIR / "agents",
     )
 
 
