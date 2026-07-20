@@ -5,7 +5,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
-from goal.infra.critic_engine import get_critic_engine
+from goal.infra.critic_engine import (
+    SENSITIVE_ACTIONS,
+    SENSITIVE_KEYWORDS,
+    get_critic_engine,
+    normalize_for_keyword_match,
+)
 from goal.agents_factory.agent_creator import AgentCreator
 # AgentBuildOrchestrator (agents.factory) est chargé paresseusement : cette
 # machinerie vit encore côté core/monolithe et sera traitée en phase 2b.
@@ -32,51 +37,6 @@ PLAN_TERMINAL_STATUSES = {
     "failed",
     "superseded",
     "archived",
-}
-
-SENSITIVE_ACTIONS = {
-    "delete_file",
-    "remove_file",
-    "rm",
-    "unlink",
-    "modify_system_config",
-    "modify_systemd",
-    "restart_systemd",
-    "write_secret",
-    "read_secret",
-    "modify_secret",
-    "modify_security",
-    "modify_core",
-    "apply_destructive_change",
-    "destructive_action",
-}
-
-SENSITIVE_KEYWORDS = {
-    "supprimer",
-    "suppression",
-    "delete",
-    "remove",
-    "destructif",
-    "destructive",
-    "systemd",
-    "service systemd",
-    "configuration système",
-    "system config",
-    "secret",
-    "secrets",
-    "token",
-    "tokens",
-    "clé ssh",
-    "ssh key",
-    "api key",
-    "sécurité",
-    "security",
-    "core critique",
-    "chmod",
-    "rm -rf",
-    "shell",
-    "exécuter du code",
-    "execute code",
 }
 
 
@@ -1255,7 +1215,10 @@ class GoalOrchestrator:
                 ]
             )
 
-        text = "\n".join(searchable).lower()
+        # Normalisation partagée avec CriticEngine (accents supprimés en plus
+        # des minuscules) : un mot-clé accentué écrit sous une autre forme
+        # ne peut plus échapper à la détection.
+        text = normalize_for_keyword_match("\n".join(searchable))
         for keyword in SENSITIVE_KEYWORDS:
             if keyword in text:
                 reasons.append(f"Mot-clé sensible détecté : {keyword}.")

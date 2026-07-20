@@ -1,6 +1,8 @@
 """Fabrique d'outils pour les agents — périmètre goal (rapatrié depuis tools/).
 
-Fondations sûres uniquement (phase 4) : models, registry, spec_builder,
-templates. tools/creator.py et tools/runtime.py (dépendent de
-modules.evolution.codex_runner) suivront en phase 6.
+models, registry, spec_builder, templates (phase 4) + creator, runtime,
+code_generator (phase 6). La génération de code IA passe par
+OllamaToolCodeGenerator (server/common/llm_client), plus par Codex CLI —
+task_type='code' est garanti local par le plancher de sécurité du
+service llm (voir server/llm/core/router.py).
 """

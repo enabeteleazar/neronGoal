@@ -15,6 +15,69 @@ from typing import Any
 from server.common.paths import NERON_DATA_DIR
 
 
+# ═══════════════════════════════════════════════════════════════════
+# Mots-clés sensibles — SOURCE DE VÉRITÉ UNIQUE pour tout le service goal.
+#
+# Avant cette fusion, deux listes indépendantes existaient : celle-ci
+# (11 termes) et SENSITIVE_BUILD_KEYWORDS dans build_orchestrator.py
+# (23 termes). Ni l'une ni l'autre n'était un sur-ensemble de l'autre —
+# un objectif contenant "sudo" bloquait dans l'une, "ssh" bloquait dans
+# l'autre, mais pas les deux. Fusionné ici en union complète : plus
+# aucun terme précédemment détecté par l'une des deux listes ne peut
+# être manqué. build_orchestrator.py doit importer SENSITIVE_KEYWORDS
+# d'ici plutôt que de garder sa propre liste (phase 8).
+# ═══════════════════════════════════════════════════════════════════
+
+import unicodedata
+
+
+def normalize_for_keyword_match(text: str) -> str:
+    """Normalisation partagée : minuscules + accents supprimés (NFKD).
+
+    IMPORTANT : avant cette fonction, CriticEngine ne faisait que
+    `.lower()` — un objectif écrit "Sécurité" (avec accent) ne
+    matchait pas de façon fiable selon la forme exacte de la chaîne.
+    build_orchestrator.py, lui, normalisait déjà ainsi. Unifié ici :
+    les deux composants matchent désormais exactement les mêmes
+    variantes accentuées ou non.
+    """
+    stripped = unicodedata.normalize("NFKD", text.lower())
+    return "".join(char for char in stripped if unicodedata.category(char) != "Mn")
+
+
+# Union de TROIS listes qui avaient divergé indépendamment :
+#   - CriticEngine (ici)                    : 11 termes, sensible aux accents
+#   - SENSITIVE_KEYWORDS (goal_orchestrator.py, déployé) : 24 termes, sensible aux accents
+#   - SENSITIVE_BUILD_KEYWORDS (build_orchestrator.py, pas encore migré) : 23 termes, déjà normalisé
+# Aucune des trois n'était un sur-ensemble des deux autres.
+SENSITIVE_KEYWORDS: frozenset[str] = frozenset({
+    "suppression", "supprimer", "delete", "remove",
+    "destructive", "destructif",
+    "systemd", "service systeme", "services systeme", "service systemd",
+    "configuration systeme", "core critique",
+    "secret", "secrets", "token", "tokens",
+    "ssh", "cle ssh", "ssh key", "api key",
+    "securite", "security",
+    "rm -rf", "rm rf", "chmod", "sudo",
+    "fichier sensible", "fichiers sensibles",
+    "shell", "executer du code", "execute code",
+})
+
+# Union des deux listes d'ACTIONS (noms d'actions de step de plan, distinct
+# des mots-clés en texte libre ci-dessus) : CriticEngine (11) +
+# goal_orchestrator.py (14). Même principe : union complète, jamais de perte
+# de couverture.
+SENSITIVE_ACTIONS: frozenset[str] = frozenset({
+    "apply_patch", "write_file", "delete_file", "remove_file",
+    "rm", "unlink",
+    "modify_core", "modify_system_config", "modify_systemd",
+    "restart_systemd",
+    "read_secret", "write_secret", "modify_secret", "modify_security",
+    "apply_destructive_change", "destructive_action",
+})
+
+
+
 CRITIC_HISTORY_PATH = Path(
     os.getenv(
         "NERON_GOAL_CRITIC_HISTORY_PATH",
@@ -57,48 +120,26 @@ class CriticEngine:
             recommendations.append("Refuser l'exécution tant que le plan est vide.")
 
         sensitive_detected = False
-        sensitive_actions = {
-            "apply_patch",
-            "write_file",
-            "delete_file",
-            "modify_core",
-            "modify_system_config",
-            "modify_systemd",
-            "read_secret",
-            "write_secret",
-            "modify_secret",
-            "modify_security",
-            "apply_destructive_change",
-        }
-        sensitive_keywords = {
-            "suppression",
-            "supprimer",
-            "delete",
-            "destructive",
-            "destructif",
-            "systemd",
-            "secret",
-            "token",
-            "ssh",
-            "sécurité",
-            "security",
-        }
-
         for step in steps:
             action = step.get("action")
             agent = step.get("agent")
-            text = " ".join(
+            raw_text = " ".join(
                 str(step.get(field) or "")
                 for field in ("title", "description", "action", "agent")
-            ).lower()
+            )
+            # Normalisation partagée avec build_orchestrator.py (phase 8) :
+            # accents supprimés, en plus du passage en minuscules — un
+            # mot-clé accentué écrit différemment ne peut plus échapper
+            # à la détection (cf. normalize_for_keyword_match ci-dessus).
+            text = normalize_for_keyword_match(raw_text)
 
-            if action in sensitive_actions:
+            if action in SENSITIVE_ACTIONS:
                 sensitive_detected = True
                 risk_score += 50
                 risks.append(f"Action sensible détectée : {action}.")
                 recommendations.append("Bloquer l'exécution automatique.")
 
-            for keyword in sensitive_keywords:
+            for keyword in SENSITIVE_KEYWORDS:
                 if keyword in text:
                     sensitive_detected = True
                     risks.append(f"Mot-clé sensible détecté : {keyword}.")

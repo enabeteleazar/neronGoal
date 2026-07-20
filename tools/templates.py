@@ -167,5 +167,7 @@ def codex_prompt(spec: ToolSpec, need: ToolNeed, *, artifact: str) -> str:
             "The tool must be deterministic and payload-only.",
             "No os, subprocess, socket, shutil, pathlib, network, filesystem, eval, or exec.",
             "The implementation must expose execute(payload) returning ToolResult.",
+            "Import ToolResult exactly as: from goal.tools.models import ToolResult",
+            "Return only the raw Python source, no explanation before or after it.",
         ]
     )
