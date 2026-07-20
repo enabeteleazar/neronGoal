@@ -8,6 +8,7 @@ from pathlib import Path
 
 from server.common.paths import NERON_WORKSPACE_DIR
 from server.common.llm_client import LLMClient, LLMClientError, get_llm_client
+from goal.infra.llm_text import strip_code_fence
 from goal.tools.models import ToolNeed, ToolSpec
 from goal.tools.templates import (
     codex_prompt,
@@ -81,7 +82,7 @@ class OllamaToolCodeGenerator(ToolCodeGenerator):
 
     Remplace l'ancien CodexToolCodeGenerator : même prompt (codex_prompt,
     déjà conçu comme un texte autonome, un seul aller-retour — jamais
-    d'édition de fichiers autonome), même extraction (_strip_code_fence),
+    d'édition de fichiers autonome), même extraction (goal.infra.llm_text.strip_code_fence),
     seul le transport change (HTTP interne au lieu d'un CLI externe).
     task_type='code' est garanti rester sur Ollama par le plancher de
     sécurité du service llm (voir server/llm/core/router.py) — aucun
@@ -115,7 +116,7 @@ class OllamaToolCodeGenerator(ToolCodeGenerator):
                     request_id, attempt, self.MAX_ATTEMPTS, exc,
                 )
                 continue
-            code = _strip_code_fence(raw)
+            code = strip_code_fence(raw)
             if code.strip():
                 return code
             last_error = RuntimeError("llm_empty_response")
@@ -178,7 +179,4 @@ def validate_workspace_path(path: Path, workspace: Path) -> bool:
     return True
 
 
-def _strip_code_fence(value: str) -> str:
-    text = value.strip()
-    match = re.fullmatch(r"```(?:python)?\s*(.*?)```", text, re.DOTALL)
-    return match.group(1).strip() if match else text
+

@@ -12,8 +12,9 @@ from goal.infra.critic_engine import (
     normalize_for_keyword_match,
 )
 from goal.agents_factory.agent_creator import AgentCreator
-# AgentBuildOrchestrator (agents.factory) est chargé paresseusement : cette
-# machinerie vit encore côté core/monolithe et sera traitée en phase 2b.
+# AgentBuildOrchestrator est chargé paresseusement (import local ci-dessous)
+# pour rester tolérant si agent_sandbox/business_validator (point 3, pas
+# encore migrés) manquent sur cette machine — voir build_orchestrator.py.
 from goal.infra.events import Event
 from goal.infra.events import event_bus
 from goal.goals.execution_engine import (
@@ -66,10 +67,10 @@ class GoalOrchestrator:
         self.notifier = notifier
         if agent_build_orchestrator is None:
             try:
-                from agents.factory.build_orchestrator import AgentBuildOrchestrator
+                from goal.agents_factory.build_orchestrator import AgentBuildOrchestrator
                 agent_build_orchestrator = AgentBuildOrchestrator()
             except ModuleNotFoundError:
-                agent_build_orchestrator = None  # machine isolée : plans agent-build indisponibles (phase 2b)
+                agent_build_orchestrator = None  # dépendance manquante (point 3 : agent_sandbox/business_validator)
         self.agent_build_orchestrator = agent_build_orchestrator
         self.agent_creator = agent_creator or AgentCreator()
         self.execution_engine = execution_engine or get_goal_execution_engine()
