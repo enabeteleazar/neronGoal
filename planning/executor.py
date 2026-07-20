@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from agents.factory.agent_creator import AgentCreator
+from goal.agents_factory.agent_creator import AgentCreator
 
 
 class PlanExecutor:

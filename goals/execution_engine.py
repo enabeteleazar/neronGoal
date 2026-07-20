@@ -4,7 +4,7 @@ import threading
 import time
 from typing import Any
 
-from core.storage.sqlite_store import SQLiteStore
+from goal.infra.sqlite_store import SQLiteStore
 
 
 STEP_PROGRESS = {

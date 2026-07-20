@@ -7,11 +7,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from common.paths import NERON_DATA_DIR
-from modules.events.event import Event
-from modules.events.event_bus import event_bus
-from modules.events.event_types import TASK_CREATED
-from core.storage.sqlite_store import SQLiteStore, get_path_lock
+from server.common.paths import NERON_DATA_DIR
+from goal.infra.events import Event
+from goal.infra.events import event_bus
+from goal.infra.events import TASK_CREATED
+from goal.infra.sqlite_store import SQLiteStore, get_path_lock
 
 
 TASKS_FILE = Path(os.getenv("NERON_TASKS_PATH", str(NERON_DATA_DIR / "tasks.json")))
@@ -45,9 +45,7 @@ class TaskManager:
         sqlite_store: SQLiteStore | None = None,
     ) -> None:
         self.path = Path(path or TASKS_FILE)
-        self.sqlite_store = sqlite_store or SQLiteStore(
-            self.path.parent / "neron_state.sqlite3"
-        )
+        self.sqlite_store = sqlite_store or SQLiteStore()
         self._lock = get_path_lock(self.path)
         self.tasks: list[dict[str, Any]] = []
         self._legacy_imported = False

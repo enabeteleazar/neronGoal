@@ -5,10 +5,10 @@ from typing import Any
 
 from goal.goals.goal import Goal
 from goal.goals import persistence
-from modules.events.event import Event
-from modules.events.event_bus import event_bus
-from modules.events.event_types import GOAL_CREATED
-from core.storage.sqlite_store import SQLiteStore, get_path_lock
+from goal.infra.events import Event
+from goal.infra.events import event_bus
+from goal.infra.events import GOAL_CREATED
+from goal.infra.sqlite_store import SQLiteStore, get_path_lock
 
 
 PRIORITY_WEIGHT = {
@@ -21,9 +21,7 @@ PRIORITY_WEIGHT = {
 
 class GoalManager:
     def __init__(self, sqlite_store: SQLiteStore | None = None) -> None:
-        self.sqlite_store = sqlite_store or SQLiteStore(
-            persistence.GOALS_PATH.parent / "neron_state.sqlite3"
-        )
+        self.sqlite_store = sqlite_store or SQLiteStore()
         self._lock = get_path_lock(persistence.GOALS_PATH)
         self._legacy_imported = False
 

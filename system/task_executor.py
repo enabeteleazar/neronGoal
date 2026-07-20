@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from modules.cognitive.critic_engine import get_critic_engine
-from agents.factory.agent_creator import AgentCreator
+from goal.infra.critic_engine import get_critic_engine
+from goal.agents_factory.agent_creator import AgentCreator
 from goal.planning.executor import PlanExecutor
 from goal.planning.storage import PlanStorage
 

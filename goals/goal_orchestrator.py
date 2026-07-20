@@ -5,11 +5,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
-from modules.cognitive.critic_engine import get_critic_engine
-from agents.factory.agent_creator import AgentCreator
-from agents.factory.build_orchestrator import AgentBuildOrchestrator
-from modules.events.event import Event
-from modules.events.event_bus import event_bus
+from goal.infra.critic_engine import get_critic_engine
+from goal.agents_factory.agent_creator import AgentCreator
+# AgentBuildOrchestrator (agents.factory) est chargé paresseusement : cette
+# machinerie vit encore côté core/monolithe et sera traitée en phase 2b.
+from goal.infra.events import Event
+from goal.infra.events import event_bus
 from goal.goals.execution_engine import (
     GoalExecutionEngine,
     get_goal_execution_engine,
@@ -92,7 +93,7 @@ class GoalOrchestrator:
         planner: AutonomousPlanner | None = None,
         storage: PlanStorage | None = None,
         notifier: Notifier | None = None,
-        agent_build_orchestrator: AgentBuildOrchestrator | None = None,
+        agent_build_orchestrator: Any | None = None,
         agent_creator: AgentCreator | None = None,
         execution_engine: GoalExecutionEngine | None = None,
     ) -> None:
@@ -103,7 +104,13 @@ class GoalOrchestrator:
         self.task_executor = get_task_executor()
         self.critic = get_critic_engine()
         self.notifier = notifier
-        self.agent_build_orchestrator = agent_build_orchestrator or AgentBuildOrchestrator()
+        if agent_build_orchestrator is None:
+            try:
+                from agents.factory.build_orchestrator import AgentBuildOrchestrator
+                agent_build_orchestrator = AgentBuildOrchestrator()
+            except ModuleNotFoundError:
+                agent_build_orchestrator = None  # machine isolée : plans agent-build indisponibles (phase 2b)
+        self.agent_build_orchestrator = agent_build_orchestrator
         self.agent_creator = agent_creator or AgentCreator()
         self.execution_engine = execution_engine or get_goal_execution_engine()
 
@@ -1113,6 +1120,11 @@ class GoalOrchestrator:
                 ),
             },
         }
+        if self.agent_build_orchestrator is None:
+            raise RuntimeError(
+                "AgentBuildOrchestrator indisponible sur cette machine "
+                "(agents.factory absent — voir phase 2b)."
+            )
         try:
             return await self.agent_build_orchestrator.build_from_request(
                 str(plan.get("goal") or ""),
@@ -1150,7 +1162,7 @@ class GoalOrchestrator:
 
     def _project_relative_path(self, path: str) -> str:
         try:
-            from common.paths import NERON_ROOT
+            from server.common.paths import NERON_ROOT
 
             return str(Path(path).resolve().relative_to(NERON_ROOT.resolve()))
         except ValueError:

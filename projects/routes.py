@@ -6,16 +6,44 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from common.paths import NERON_WORKSPACE_DIR
-from core.api.auth import verify_api_key
-from agents.factory.agent_creator import AgentCreator
-from agents.factory.build_orchestrator import AgentBuildOrchestrator
-from agents.factory.agent_manager import AgentManager
-from agents.factory.promotion import AgentPromotionService
-from agents.factory.validator import validate_agent
-from agents.runtime.runtime import get_agent_runtime
-from modules.evolution.codex_runner import CodexRunner
+from server.common.paths import NERON_WORKSPACE_DIR
+from goal.infra.security import require_api_key as verify_api_key
+from goal.agents_factory.agent_creator import AgentCreator
 from goal.projects.manager import get_project_manager
+
+
+class _MissingDependency:
+    """Substitut pour une classe/fonction du monolithe indisponible sur
+    cette machine (agents.factory.*, modules.evolution.*). Les endpoints
+    /projects/* n'y touchent jamais ; seuls /agents/* en ont besoin et
+    échoueront avec un message clair plutôt qu'empêcher tout le service
+    goal de démarrer (voir goal_orchestrator._get_agent_build_orchestrator
+    pour le même principe, phase 2b)."""
+
+    def __init__(self, name: str, module: str) -> None:
+        self._name, self._module = name, module
+
+    def __call__(self, *args, **kwargs):
+        raise RuntimeError(
+            f"{self._name} indisponible sur cette machine "
+            f"({self._module} absent — fonctionnalité agents.* en attente de la phase 2b)."
+        )
+
+
+def _optional_import(module_path: str, attr: str):
+    try:
+        module = __import__(module_path, fromlist=[attr])
+        return getattr(module, attr)
+    except ModuleNotFoundError:
+        return _MissingDependency(attr, module_path)
+
+
+AgentBuildOrchestrator = _optional_import("agents.factory.build_orchestrator", "AgentBuildOrchestrator")
+AgentManager = _optional_import("agents.factory.agent_manager", "AgentManager")
+AgentPromotionService = _optional_import("agents.factory.promotion", "AgentPromotionService")
+validate_agent = _optional_import("agents.factory.validator", "validate_agent")
+get_agent_runtime = _optional_import("agents.runtime.runtime", "get_agent_runtime")
+CodexRunner = _optional_import("modules.evolution.codex_runner", "CodexRunner")
 
 
 router = APIRouter(tags=["projects"], dependencies=[Depends(verify_api_key)])

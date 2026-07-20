@@ -1,22 +1,21 @@
 from __future__ import annotations
 
-import hmac
 import logging
 import os
 import time
 from contextlib import asynccontextmanager
-from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
-from threading import RLock
 from typing import Any
-from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
-from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from goal.infra.security import expected_api_key as _expected_api_key
+from goal.infra.security import require_api_key
 from server.common.config import env_int
 from server.common.registry.client import RegistryClient
+
+from goal.goals.goal_manager import get_goal_manager
 
 
 logger = logging.getLogger("goal.app")
@@ -85,99 +84,11 @@ def _service_binding() -> tuple[str, int, str]:
 # ouverts (sondes watchdog) ; tout le reste est protégé.
 # ═══════════════════════════════════════════════════════════════════
 
-def _expected_api_key() -> str:
-    return os.getenv("NERON_API_KEY", "").strip()
-
-
-async def require_api_key(request: Request) -> None:
-    expected = _expected_api_key()
-    if not expected:
-        # Clé absente : comportement historique conservé (ouvert), mais
-        # signalé au démarrage dans lifespan() plutôt qu'à chaque requête.
-        return
-    header = request.headers.get("Authorization", "")
-    provided = header.removeprefix("Bearer ").strip()
-    if not provided or not hmac.compare_digest(provided, expected):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or missing API key",
-        )
-
-
-# ═══════════════════════════════════════════════════════════════════
-# Catalogue MVP (inchangé — remplacé en phase 3)
-# ═══════════════════════════════════════════════════════════════════
-
-class GoalCreateRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
-
-    title: str = Field(min_length=1)
-    description: str = ""
-    priority: str = "medium"
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-    @field_validator("title")
-    @classmethod
-    def reject_blank_title(cls, value: str) -> str:
-        if not value.strip():
-            raise ValueError("title must not be blank")
-        return value
-
-
-class GoalStore:
-    """Small process-local catalogue for the autonomous Goal MVP."""
-
-    def __init__(self) -> None:
-        self._goals: dict[str, dict[str, Any]] = {}
-        self._lock = RLock()
-
-    def create(self, request: GoalCreateRequest) -> dict[str, Any]:
-        now = _utc_now()
-        goal = {
-            "id": f"goal_{uuid4().hex[:12]}",
-            "title": request.title,
-            "description": request.description,
-            "priority": request.priority,
-            "status": "queued",
-            "metadata": deepcopy(request.metadata),
-            "created_at": now,
-            "updated_at": now,
-        }
-        with self._lock:
-            self._goals[goal["id"]] = goal
-        return deepcopy(goal)
-
-    def list(self) -> list[dict[str, Any]]:
-        with self._lock:
-            return deepcopy(list(self._goals.values()))
-
-    def get(self, goal_id: str) -> dict[str, Any] | None:
-        with self._lock:
-            goal = self._goals.get(goal_id)
-            return deepcopy(goal) if goal is not None else None
-
-    def cancel(self, goal_id: str) -> dict[str, Any] | None:
-        with self._lock:
-            goal = self._goals.get(goal_id)
-            if goal is None:
-                return None
-            if goal["status"] not in {"completed", "failed", "cancelled"}:
-                goal["status"] = "cancelled"
-                goal["updated_at"] = _utc_now()
-            return deepcopy(goal)
-
-    def clear(self) -> None:
-        with self._lock:
-            self._goals.clear()
-
-
-goal_store = GoalStore()
-
-
 def create_registry_client(host: str, port: int, core_url: str) -> RegistryClient:
-    # NOTE : les capabilities restent celles annoncées historiquement pour ne
-    # pas casser une éventuelle découverte côté core ; elles deviendront
-    # honnêtes en phase 3, quand l'exécution réelle sera montée ici.
+    # Phase 3 : ces capabilities sont désormais honnêtes — goals/planning/
+    # projects/tasks sont réellement montés et exécutés par ce service.
+    # "agent_creation" reste vraie en mode dégradé (agents.factory.
+    # build_orchestrator indisponible hors machine avec le monolithe).
     return RegistryClient(
         service_name=SERVICE_NAME,
         version=VERSION,
@@ -228,6 +139,17 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Phase 3 : l'usine est branchée sur la vitrine. Chaque router porte déjà
+# sa propre dépendance require_api_key (voir goal.infra.security).
+from goal.goals.routes import router as goals_router
+from goal.projects.routes import router as projects_router
+from goal.system.routes import router as tasks_router
+
+app.include_router(goals_router)
+app.include_router(projects_router)
+app.include_router(tasks_router)
+
+
 
 @app.get("/health")
 async def health() -> dict[str, str]:
@@ -241,36 +163,5 @@ async def service_status() -> dict[str, str | float | int]:
         "service": "goal",
         "status": "running",
         "uptime": round(max(0.0, time.monotonic() - started_at), 3),
-        "goal_count": len(goal_store.list()),
+        "goal_count": len(get_goal_manager().list_goals()),
     }
-
-
-@app.get("/goals", dependencies=[Depends(require_api_key)])
-async def list_goals() -> dict[str, Any]:
-    goals = goal_store.list()
-    return {"count": len(goals), "goals": goals}
-
-
-@app.post(
-    "/goals",
-    status_code=status.HTTP_202_ACCEPTED,
-    dependencies=[Depends(require_api_key)],
-)
-async def create_goal(request: GoalCreateRequest) -> dict[str, Any]:
-    return {"goal": goal_store.create(request)}
-
-
-@app.get("/goals/{goal_id}", dependencies=[Depends(require_api_key)])
-async def get_goal(goal_id: str) -> dict[str, Any]:
-    goal = goal_store.get(goal_id)
-    if goal is None:
-        raise HTTPException(status_code=404, detail="Goal not found")
-    return {"goal": goal}
-
-
-@app.post("/goals/{goal_id}/cancel", dependencies=[Depends(require_api_key)])
-async def cancel_goal(goal_id: str) -> dict[str, Any]:
-    goal = goal_store.cancel(goal_id)
-    if goal is None:
-        raise HTTPException(status_code=404, detail="Goal not found")
-    return {"goal": goal}

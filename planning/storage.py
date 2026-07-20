@@ -5,11 +5,11 @@ import os
 from pathlib import Path
 from typing import Any
 
-from common.paths import NERON_DATA_DIR
-from modules.events.event import Event
-from modules.events.event_bus import event_bus
-from modules.events.event_types import PLAN_CREATED
-from core.storage.sqlite_store import SQLiteStore, get_path_lock
+from server.common.paths import NERON_DATA_DIR
+from goal.infra.events import Event
+from goal.infra.events import event_bus
+from goal.infra.events import PLAN_CREATED
+from goal.infra.sqlite_store import SQLiteStore, get_path_lock
 
 
 DEFAULT_PLAN_HISTORY_PATH = Path(
@@ -25,9 +25,7 @@ class PlanStorage:
     ):
         self.path = path
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.sqlite_store = sqlite_store or SQLiteStore(
-            path.parent / "neron_state.sqlite3"
-        )
+        self.sqlite_store = sqlite_store or SQLiteStore()
         self._lock = get_path_lock(path)
         self._legacy_imported = False
 
