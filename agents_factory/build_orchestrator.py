@@ -19,6 +19,8 @@ from goal.agents_factory.registry import DEFAULT_GENERATED_AGENTS, DynamicAgentR
 from goal.agents_factory.promotion import AgentPromotionService
 from goal.agents_factory.validator import validate_agent
 from goal.agents_factory.code_generator import OllamaAgentCodeGenerator
+from goal.infra.agent_sandbox import AgentSandbox
+from goal.infra.business_validator import BusinessValidator
 from goal.infra.events import Event, event_bus, AGENT_CREATED, AGENT_PROMOTED, AGENT_REGISTERED
 from goal.infra.critic_engine import SENSITIVE_KEYWORDS, normalize_for_keyword_match
 from goal.goals.execution_engine import GoalExecutionEngine
@@ -80,8 +82,8 @@ class AgentBuildOrchestrator:
         runtime_check: bool = True,
         ollama_generator: OllamaAgentCodeGenerator | None = None,
         runtime_governor: Any | None = None,
-        business_validator: Any | None = None,
-        agent_sandbox: Any | None = None,
+        business_validator: BusinessValidator | None = None,
+        agent_sandbox: AgentSandbox | None = None,
         execution_engine: GoalExecutionEngine | None = None,
     ) -> None:
         self.project_manager = project_manager or get_project_manager()
@@ -96,39 +98,18 @@ class AgentBuildOrchestrator:
         self.execution_engine = execution_engine or GoalExecutionEngine(
             self.project_manager.sqlite_store
         )
-
-        # AgentSandbox et BusinessValidator : dépendances du monolithe pas
-        # encore rapatriées (point 3 du plan). Import paresseux et
-        # tolérant — les étapes qui en dépendent (sandbox_verify_agent,
-        # business_validation) échoueront proprement avec un message
-        # clair plutôt que d'empêcher tout AgentBuildOrchestrator de
-        # s'instancier. La génération de code (Ollama), la validation
-        # syntaxique, la compilation et les tests fonctionnent déjà sans
-        # elles.
-        self.agent_sandbox = agent_sandbox
-        if self.agent_sandbox is None:
-            try:
-                from core.runtime.sandbox.agent_sandbox import AgentSandbox
-
-                self.agent_sandbox = AgentSandbox(
-                    python_executable=self.python_executable,
-                    project_root=self.project_root,
-                )
-            except ModuleNotFoundError:
-                self.agent_sandbox = None  # indisponible sur cette machine (point 3)
-
-        self.business_validator = business_validator
-        if self.business_validator is None and self.agent_sandbox is not None:
-            try:
-                from modules.validation.business_validator import BusinessValidator
-
-                self.business_validator = BusinessValidator(
-                    python_executable=self.python_executable,
-                    project_root=self.project_root,
-                    sandbox=self.agent_sandbox,
-                )
-            except ModuleNotFoundError:
-                self.business_validator = None  # indisponible sur cette machine (point 3)
+        # AgentSandbox et BusinessValidator : rapatriés (point 3). Import
+        # direct désormais — ce ne sont plus des dépendances optionnelles
+        # du monolithe, mais des organes propres au service goal.
+        self.agent_sandbox = agent_sandbox or AgentSandbox(
+            python_executable=self.python_executable,
+            project_root=self.project_root,
+        )
+        self.business_validator = business_validator or BusinessValidator(
+            python_executable=self.python_executable,
+            project_root=self.project_root,
+            sandbox=self.agent_sandbox,
+        )
 
     async def build_from_request(
         self,
@@ -348,14 +329,6 @@ class AgentBuildOrchestrator:
             self._step(project_id, "tests", "done", 70)
 
             self._goal_step_started(metadata, "business_validation")
-            if self.business_validator is None:
-                failed = self._fail(
-                    project_id,
-                    "business_validation",
-                    "business_validator_unavailable: point 3 du plan de "
-                    "migration non encore fait sur cette machine.",
-                )
-                return self._with_build_status(failed, codex_state)
             business_validation = self.business_validator.validate(
                 spec.to_dict(),
                 agent_file,
@@ -837,7 +810,19 @@ class AgentBuildOrchestrator:
                 "Agent contract:",
                 "- The file must define class Agent.",
                 f"- Agent.name must be {spec.name!r}.",
-                "- Agent.execute must be async and return a dict with status=\'ok\' and a non-empty response.",
+                "- Agent.execute MUST have EXACTLY this signature, no other:",
+                "    async def execute(self, text: str = \"\") -> dict",
+                "  Do not use a different parameter name (e.g. not 'inputs', not 'payload',"
+                " not 'request'). Do not add extra required parameters. The test harness"
+                " that validates this agent calls it as execute(text='...') — any other"
+                " signature will fail validation.",
+                "- The returned dict MUST contain a key literally named \"response\" whose"
+                " value is a non-empty string, on EVERY code path (success AND error),"
+                " in addition to any other domain-specific keys you want to include.",
+                "  Example of a correct return value (adapt the content, keep the shape):",
+                "    return {\"status\": \"ok\", \"response\": \"3 mots trouves\", \"count\": 3}",
+                "  This is WRONG — missing the literal \"response\" key on the success path:",
+                "    return {\"status\": \"ok\", \"count\": 3, \"text\": text}",
                 "- Keep behavior deterministic and testable without network access.",
                 "- Do not read, write, or reference secrets, systemd, or security config.",
                 "- Import nothing that performs filesystem, network, or subprocess access.",
@@ -1087,22 +1072,6 @@ class AgentBuildOrchestrator:
 
     def _run_command(self, command: list[str], name: str) -> dict[str, Any]:
         if name.startswith("pytest_agent"):
-            if self.agent_sandbox is None:
-                # Ne JAMAIS retomber sur un subprocess.run direct ici : ce
-                # serait exécuter du code d'agent potentiellement généré par
-                # l'IA sans l'isolation prévue — une régression de sécurité
-                # silencieuse. On échoue proprement à la place.
-                return {
-                    "name": name,
-                    "command": command,
-                    "returncode": 1,
-                    "stdout_tail": "",
-                    "stderr_tail": (
-                        "agent_sandbox indisponible sur cette machine "
-                        "(point 3 du plan de migration non encore fait)."
-                    ),
-                    "ran_at": datetime.now(timezone.utc).isoformat(),
-                }
             return self.agent_sandbox.run_pytest(
                 command[-1],
                 timeout=120,
@@ -1140,14 +1109,6 @@ class AgentBuildOrchestrator:
         spec: AgentSpec,
         agent_file: Path,
     ) -> dict[str, Any]:
-        if self.agent_sandbox is None:
-            return {
-                "ok": False,
-                "error": (
-                    "agent_sandbox_unavailable: point 3 du plan de "
-                    "migration non encore fait sur cette machine."
-                ),
-            }
         execution = self.agent_sandbox.execute_agent(
             agent_file,
             "combien de temps avant la WWDC ?",
