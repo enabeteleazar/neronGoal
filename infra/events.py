@@ -25,6 +25,17 @@ PLAN_CREATED = "plan.created"
 TASK_CREATED = "task.created"
 PROJECT_CREATED = "project.created"
 
+# Types d'événements du domaine agents/tools (ajoutés phase 4)
+AGENT_CREATED = "agent.created"
+AGENT_PROMOTED = "agent.promoted"
+AGENT_REGISTERED = "agent.registered"
+AGENT_EXECUTION_STARTED = "agent.execution_started"
+AGENT_EXECUTION_COMPLETED = "agent.execution_completed"
+TOOL_CREATED = "tool.created"
+TOOL_REGISTERED = "tool.registered"
+TOOL_EXECUTION_STARTED = "tool.execution_started"
+TOOL_EXECUTION_COMPLETED = "tool.execution_completed"
+
 
 @dataclass(slots=True)
 class Event:
