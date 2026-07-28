@@ -13,13 +13,14 @@ from fastapi import Depends, FastAPI, HTTPException, Request, status
 from goal.infra.security import expected_api_key as _expected_api_key
 from goal.infra.security import require_api_key
 from server.common.config import env_int
+from server.common.paths import service_version
 from server.common.registry.client import RegistryClient
 
 from goal.goals.goal_manager import get_goal_manager
 
 
 logger = logging.getLogger("goal.app")
-VERSION = "0.1.0"
+VERSION = service_version(__file__)
 SERVICE_NAME = "goal"
 
 
