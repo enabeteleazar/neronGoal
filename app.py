@@ -13,6 +13,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, status
 from goal.infra.security import expected_api_key as _expected_api_key
 from goal.infra.security import require_api_key
 from server.common.config import env_int
+from server.common.metrics import mount_metrics
 from server.common.paths import service_version
 from server.common.registry.client import RegistryClient
 
@@ -139,6 +140,8 @@ app = FastAPI(
     version=VERSION,
     lifespan=lifespan,
 )
+
+mount_metrics(app, "goal")
 
 # Phase 3 : l'usine est branchée sur la vitrine. Chaque router porte déjà
 # sa propre dépendance require_api_key (voir goal.infra.security).
