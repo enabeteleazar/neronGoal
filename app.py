@@ -28,47 +28,10 @@ def _utc_now() -> str:
 
 
 # ═══════════════════════════════════════════════════════════════════
-# Topologie — env d'abord, puis neron.server.yaml, puis défauts sûrs.
-# Plus aucun "localhost" codé en dur.
-# ═══════════════════════════════════════════════════════════════════
-
-# ═══════════════════════════════════════════════════════════════════
 # Authentification — même convention que le reste du cluster :
 # Authorization: Bearer $NERON_API_KEY. /health et /status restent
 # ouverts (sondes watchdog) ; tout le reste est protégé.
 # ═══════════════════════════════════════════════════════════════════
-
-async def lifespan(app: FastAPI):
-    app.state.started_at = time.monotonic()
-    app.state.registry_client = None
-
-    if not _expected_api_key():
-        logger.warning(
-            "NERON_API_KEY absente : les endpoints /goals ne sont PAS protégés"
-        )
-
-    host, port, core_url = _service_binding()
-    try:
-        registry_client = create_registry_client(host, port, core_url)
-        await registry_client.start()
-        app.state.registry_client = registry_client
-        logger.info(
-            "Goal daemon démarré (annonce %s:%s, core=%s)", host, port, core_url
-        )
-    except Exception:
-        # Le registre ne doit jamais empêcher l'API de servir.
-        logger.exception(
-            "Échec d'initialisation du client registre — "
-            "l'API goal reste disponible sans enregistrement"
-        )
-
-    try:
-        yield
-    finally:
-        if app.state.registry_client is not None:
-            await app.state.registry_client.stop()
-        logger.info("Goal daemon stopped")
-
 
 @asynccontextmanager
 async def _setup(app: FastAPI):
