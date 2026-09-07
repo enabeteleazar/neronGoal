@@ -114,6 +114,12 @@ async def goal_events(goal_id: str) -> dict[str, Any]:
 
 @router.post("/goals")
 async def create_goal(payload: GoalCreateRequest) -> dict[str, Any]:
+    # Un objectif sans titre n'a pas de sens et devient introuvable dans la
+    # liste. /goals/run et /goal refusaient deja l'objectif vide en 422 ;
+    # cette route, elle, acceptait "   " et creait un objectif fantome.
+    if not payload.title.strip():
+        raise HTTPException(status_code=422, detail="title is required")
+
     goal = get_goal_manager().create_goal(
         title=payload.title,
         description=payload.description,
