@@ -345,6 +345,20 @@ async def delete_agent(agent_name: str) -> dict:
     return AgentManager().delete_agent(agent_name)
 
 
+# Activation / désactivation persistantes (agents/factory/agent_state.py côté
+# neronOS). Appelées par le Core en HTTP (« désactive l'agent X »,
+# « réactive l'agent X ») : le registre et les fichiers d'agents restent sur
+# la machine de Goal. Statuts : enabled | disabled | not_found | refused.
+@router.post("/agents/{agent_name}/enable")
+async def enable_agent(agent_name: str) -> dict:
+    return AgentManager().set_agent_enabled(agent_name, True)
+
+
+@router.post("/agents/{agent_name}/disable")
+async def disable_agent(agent_name: str) -> dict:
+    return AgentManager().set_agent_enabled(agent_name, False)
+
+
 @router.post("/agents/{agent_name}/rollback")
 async def rollback_agent(agent_name: str, payload: AgentRollbackRequest | None = None) -> dict:
     return AgentManager().rollback_agent(agent_name, backup_path=(payload or AgentRollbackRequest()).backup_path)
