@@ -19,12 +19,43 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from server.common.paths import NERON_ROOT
+from server.common.paths import (
+    NERON_DATA_DIR,
+    NERON_ROOT,
+    NERON_SECRETS_FILE,
+    NERON_SERVER_DIR,
+)
 
 _RESULT_MARKER = "__NERON_AGENT_SANDBOX_RESULT__"
 _SYSTEMD_USER = "neron-agent"
 _VALID_BACKENDS = {"auto", "python", "systemd"}
 _VALID_SYSTEMD_SUDO_MODES = {"auto", "false", "true"}
+
+# Isolation minimale exigée pour exécuter du code généré. Le mode Python
+# (python_audit : crochet d'audit + limites de ressources) n'est PAS une
+# frontière de sécurité : le code tourne sous le même utilisateur que Néron,
+# peut lire secrets.env, les jetons OAuth, la base mémoire, et contourner le
+# crochet (ctypes...). En mode « auto », il est donc refusé : il faut systemd
+# (utilisateur neron-agent) ou bubblewrap. Il reste utilisable sur choix
+# explicite (NERON_SANDBOX_BACKEND=python), pour le développement et les tests.
+_ISOLATION_UNAVAILABLE = "agent_sandbox_isolation_unavailable"
+
+
+def sensitive_paths() -> list[Path]:
+    """Chemins que le code généré ne doit jamais lire : secrets, données
+    (jetons OAuth de Gateways, états), base mémoire, dossier personnel."""
+    candidates = [
+        Path(NERON_SECRETS_FILE),
+        Path(NERON_DATA_DIR),
+        Path(NERON_SERVER_DIR) / "memory",
+        Path.home(),
+    ]
+    seen: list[Path] = []
+    for path in candidates:
+        resolved = path.expanduser().resolve()
+        if resolved not in seen:
+            seen.append(resolved)
+    return seen
 
 
 class AgentSandbox:
@@ -161,6 +192,73 @@ class AgentSandbox:
             "sandbox": result,
         }
 
+    def execute_tool(
+        self,
+        tool_path: Path | str,
+        payload: dict[str, Any] | None = None,
+        *,
+        timeout: int | None = None,
+        name: str = "tool_execution",
+    ) -> dict[str, Any]:
+        """Exécute la fonction `execute(payload)` d'un outil généré, isolé.
+
+        Les outils générés étaient chargés dans le processus du service
+        (importlib), avec tous ses secrets et droits. Le résultat revient en
+        JSON (dict) ; à l'appelant de le reconvertir en ToolResult.
+        """
+        staged_tool, stage_dir = self._stage_agent(tool_path)
+        try:
+            result = self._run(
+                {"mode": "tool", "tool_path": str(staged_tool), "payload": dict(payload or {})},
+                timeout=timeout,
+                name=name,
+            )
+        finally:
+            shutil.rmtree(stage_dir, ignore_errors=True)
+        sandbox_payload = result.get("payload") or {}
+        if result["returncode"] != 0 or not sandbox_payload.get("ok"):
+            return {
+                "ok": False,
+                "error": (
+                    sandbox_payload.get("error")
+                    or result.get("error")
+                    or result.get("stderr_tail")
+                    or "tool_sandbox_failed"
+                ),
+                "sandbox": result,
+            }
+        return {"ok": True, "result": sandbox_payload.get("result"), "sandbox": result}
+
+    def _masked_paths(self) -> list[Path]:
+        """Chemins sensibles existants, hors espace de travail du bac à sable."""
+        masked = []
+        for path in sensitive_paths():
+            if not path.exists():
+                continue
+            # Ne jamais masquer ce dont le bac à sable a besoin pour tourner :
+            # l'espace de travail, le code du projet, l'installation Python
+            # (sur une machine de développement, tout peut vivre sous ~).
+            needed = (
+                self.workspace,
+                self.project_root,
+                Path(sys.prefix).resolve(),
+                Path(sys.base_prefix).resolve(),
+                self._runner.parent,
+            )
+            if any(item == path or item.is_relative_to(path) for item in needed):
+                continue
+            masked.append(path)
+        return masked
+
+    def _bwrap_masks(self) -> list[str]:
+        arguments: list[str] = []
+        for path in self._masked_paths():
+            if path.is_dir():
+                arguments += ["--tmpfs", str(path)]
+            else:
+                arguments += ["--ro-bind", "/dev/null", str(path)]
+        return arguments
+
     def _stage_agent(
         self,
         agent_path: Path | str,
@@ -195,6 +293,8 @@ class AgentSandbox:
         payload = {
             **config,
             "project_root": str(self.project_root),
+            "import_paths": [str(Path(NERON_SERVER_DIR).resolve())],
+            "denied_read_paths": [str(path) for path in self._masked_paths()],
             "workspace": str(self.workspace),
             "limits": {
                 "cpu_seconds": effective_timeout + 1,
@@ -222,6 +322,23 @@ class AgentSandbox:
             isolation = "systemd"
         elif isolation == "bubblewrap":
             command = self._bwrap_command(command, sandbox_tmp)
+        elif self.backend == "auto":
+            # Ni systemd (neron-agent) ni bubblewrap : on refuse plutôt que
+            # d'exécuter du code généré sans frontière réelle.
+            self._stop_tool_server(tool_server)
+            return {
+                "name": name,
+                "command": self._redacted_command(command),
+                "returncode": 1,
+                "stdout_tail": "",
+                "stderr_tail": "",
+                "error": _ISOLATION_UNAVAILABLE,
+                "timed_out": False,
+                "isolation": isolation,
+                "backend_error": True,
+                **self._result_diagnostics(isolation),
+                "ran_at": datetime.now(timezone.utc).isoformat(),
+            }
 
         environment = {
             "HOME": str(self.workspace),
@@ -538,6 +655,7 @@ class AgentSandbox:
             "--ro-bind",
             "/",
             "/",
+            *self._bwrap_masks(),
             "--bind",
             str(self.workspace),
             str(self.workspace),
@@ -576,6 +694,7 @@ class AgentSandbox:
             "--property=PrivateTmp=yes",
             "--property=ProtectSystem=strict",
             "--property=ProtectHome=yes",
+            *[f"--property=InaccessiblePaths=-{path}" for path in self._masked_paths()],
             f"--property=ReadWritePaths={self.workspace}",
             f"--property=WorkingDirectory={self.workspace}",
             f"--setenv=HOME={self.workspace}",

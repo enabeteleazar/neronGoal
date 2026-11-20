@@ -140,19 +140,14 @@ class ToolRuntime:
 
     @classmethod
     def _load_registered_handler(cls, spec):
+        """Outil généré enregistré : exécuté dans le bac à sable, jamais
+        importé dans ce processus (cf. goal.tools.sandboxed)."""
         path = cls._registered_handler_path(spec)
         if path is None or not path.is_file():
             return None
-        module_spec = importlib.util.spec_from_file_location(
-            f"registered_tool_{spec.slug}",
-            path,
-        )
-        if not module_spec or not module_spec.loader:
-            return None
-        module = importlib.util.module_from_spec(module_spec)
-        module_spec.loader.exec_module(module)
-        handler = getattr(module, "execute", None)
-        return handler if callable(handler) else None
+        from goal.tools.sandboxed import sandboxed_handler
+
+        return sandboxed_handler(path)
 
     def _read_logs(self, payload: dict[str, Any]) -> ToolResult:
         logs = payload.get("logs")

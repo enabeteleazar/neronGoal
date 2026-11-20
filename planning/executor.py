@@ -9,6 +9,12 @@ from typing import Any
 
 from goal.agents_factory.agent_creator import AgentCreator
 
+_SECRET_ENV = re.compile(r"(?i)(api[_-]?key|token|secret|password|passwd|credential|_auth)")
+
+
+def _without_secrets(environ) -> dict[str, str]:
+    return {key: value for key, value in environ.items() if not _SECRET_ENV.search(key)}
+
 
 class PlanExecutor:
     def __init__(
@@ -209,12 +215,15 @@ class PlanExecutor:
         )
 
     def _run_tests(self) -> dict[str, Any]:
+        # Les tests du projet incluent du code généré (brouillons d'agents) :
+        # environnement expurgé des secrets (clés, jetons, mots de passe).
         result = subprocess.run(
             ["python3", "-m", "pytest", "-q"],
             cwd=self.project_root,
             text=True,
             capture_output=True,
             timeout=120,
+            env=_without_secrets(os.environ),
         )
 
         return {

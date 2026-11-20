@@ -52,15 +52,33 @@ def _inside(path: Any, workspace: pathlib.Path) -> bool:
         return False
 
 
+def _denied(path: Any, denied: list[pathlib.Path]) -> bool:
+    if isinstance(path, int) or not denied:
+        return False
+    try:
+        resolved = pathlib.Path(os.fsdecode(path)).resolve()
+    except (TypeError, ValueError, OSError):
+        return False
+    return any(resolved == root or resolved.is_relative_to(root) for root in denied)
+
+
 def _install_audit_guard(
     workspace: pathlib.Path,
     tool_socket: pathlib.Path | None = None,
+    denied_read_paths: list[pathlib.Path] | None = None,
 ) -> None:
+    denied = list(denied_read_paths or [])
+
     def guard(event: str, args: tuple[Any, ...]) -> None:
         if event == "open":
             path = args[0] if args else None
             mode = str(args[1] or "") if len(args) > 1 else ""
             flags = int(args[2] or 0) if len(args) > 2 else 0
+            # Secrets, jetons, base mémoire, dossier personnel : interdits en
+            # lecture comme en écriture (défense en profondeur ; la frontière
+            # réelle reste systemd ou bubblewrap).
+            if _denied(path, denied):
+                raise PermissionError(f"sandbox_read_blocked: {path}")
             if (
                 any(character in mode for character in "wax+")
                 or flags & _WRITE_FLAGS
@@ -72,8 +90,11 @@ def _install_audit_guard(
             if any(not _inside(path, workspace) for path in paths):
                 raise PermissionError(f"sandbox_write_blocked: {paths}")
             return
-        if event in {"os.system", "subprocess.Popen"}:
+        if event in {"os.system", "subprocess.Popen", "os.exec", "os.posix_spawn", "os.spawn"}:
             raise PermissionError("sandbox_subprocess_blocked")
+        if event in {"ctypes.dlopen", "ctypes.dlsym", "ctypes.cdata"}:
+            # ctypes permet de contourner tout crochet d'audit.
+            raise PermissionError("sandbox_ctypes_blocked")
         if event == "socket.connect":
             destination = args[1] if len(args) > 1 else None
             if tool_socket is not None and str(destination) == str(tool_socket):
@@ -234,8 +255,36 @@ async def _execute_agent(config: dict[str, Any]) -> Any:
     return result
 
 
+def _to_jsonable(value: Any) -> Any:
+    if hasattr(value, "to_dict") and callable(value.to_dict):
+        return value.to_dict()
+    import dataclasses
+
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return dataclasses.asdict(value)
+    return value
+
+
+async def _execute_tool(config: dict[str, Any]) -> Any:
+    tool_path = pathlib.Path(config["tool_path"])
+    module_spec = importlib.util.spec_from_file_location("neron_sandbox_tool", tool_path)
+    if module_spec is None or module_spec.loader is None:
+        raise RuntimeError("tool_import_spec_unavailable")
+    module = importlib.util.module_from_spec(module_spec)
+    module_spec.loader.exec_module(module)
+    execute = getattr(module, "execute", None)
+    if not callable(execute):
+        raise RuntimeError("generated_tool_execute_missing")
+    result = execute(dict(config.get("payload") or {}))
+    if inspect.isawaitable(result):
+        result = await result
+    return _to_jsonable(result)
+
+
 def _run(config: dict[str, Any]) -> dict[str, Any]:
     mode = config.get("mode")
+    if mode == "tool":
+        return {"ok": True, "result": asyncio.run(_execute_tool(config))}
     if mode == "agent":
         result = asyncio.run(_execute_agent(config))
         return {"ok": True, "result": result}
@@ -265,8 +314,15 @@ def main() -> None:
     os.chdir(workspace)
     sys.dont_write_bytecode = True
     sys.path.insert(0, str(project_root))
+    for extra in config.get("import_paths") or []:
+        if extra not in sys.path:
+            sys.path.insert(1, str(extra))
     _apply_limits(config)
-    _install_audit_guard(workspace, tool_socket)
+    _install_audit_guard(
+        workspace,
+        tool_socket,
+        [pathlib.Path(path) for path in config.get("denied_read_paths") or []],
+    )
     try:
         payload = _run(config)
     except BaseException as exc:

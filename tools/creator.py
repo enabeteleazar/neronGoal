@@ -288,39 +288,19 @@ class ToolCreator:
 
     @staticmethod
     def _load_handler(path: Path):
-        module_spec = importlib.util.spec_from_file_location(
-            f"generated_tool_{path.stem}",
-            path,
-        )
-        if not module_spec or not module_spec.loader:
-            raise RuntimeError("generated_tool_import_failed")
-        module = importlib.util.module_from_spec(module_spec)
-        module_spec.loader.exec_module(module)
-        handler = getattr(module, "execute", None)
-        if not callable(handler):
-            raise RuntimeError("generated_tool_execute_missing")
-        return handler
+        """Outil promu : exécuté dans le bac à sable (cf. goal.tools.sandboxed)."""
+        from goal.tools.sandboxed import sandboxed_handler
+
+        return sandboxed_handler(path)
 
     @staticmethod
     def _validate_generated_tool(test_path: Path) -> None:
-        env = os.environ.copy()
-        server_root = str(Path(__file__).resolve().parents[1])
-        existing_pythonpath = env.get("PYTHONPATH")
-        env["PYTHONPATH"] = (
-            f"{server_root}{os.pathsep}{existing_pythonpath}"
-            if existing_pythonpath
-            else server_root
-        )
-        completed = subprocess.run(
-            [sys.executable, "-m", "pytest", "-q", str(test_path)],
-            text=True,
-            capture_output=True,
-            timeout=120,
-            env=env,
-        )
-        if completed.returncode != 0:
-            error = completed.stdout[-2000:] or completed.stderr[-2000:]
-            raise RuntimeError(f"tool_tests_failed:{error}")
+        """Tests de l'outil généré dans le bac à sable : environnement sans
+        secrets, isolation système. Ils tournaient auparavant dans un pytest
+        héritant de tout l'environnement du service."""
+        from goal.tools.sandboxed import run_tool_tests
+
+        run_tool_tests(test_path, timeout=120)
 
     @staticmethod
     def _infer_domain(normalized: str) -> str:
