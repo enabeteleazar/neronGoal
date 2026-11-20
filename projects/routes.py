@@ -285,7 +285,14 @@ async def _approve_agent_proposal_with_codex(
 async def list_agents() -> dict:
     runtime = get_agent_runtime()
     agents = runtime.list_agents()
-    return {"count": len(agents), "agents": agents}
+    # `disabled` : agents désactivés (agents_state.json, cf. POST
+    # /agents/{nom}/disable). Ajout rétrocompatible : le Core l'utilise pour
+    # afficher l'état de chaque agent dans le Dashboard.
+    from agents.factory.agent_state import disabled_agents
+
+    generated_dir = getattr(runtime.registry, "generated_dir", None)
+    disabled = sorted(disabled_agents(generated_dir) & set(agents)) if generated_dir else []
+    return {"count": len(agents), "agents": agents, "disabled": disabled}
 
 
 @router.get("/agents/registry/scan")
